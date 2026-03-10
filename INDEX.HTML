@@ -157,8 +157,8 @@
         const landmarks = results.multiFaceLandmarks[0];
         const tilt = landmarks[33].y - landmarks[263].y; // Left Eye vs Right Eye
 
-        if (tilt > 0.07) handleAnswer("A");
-        else if (tilt < -0.07) handleAnswer("B");
+        if (tilt > 0.04) handleAnswer("A");
+        else if (tilt < -0.04) handleAnswer("B");
     }
 
     function handleAnswer(choice) {
