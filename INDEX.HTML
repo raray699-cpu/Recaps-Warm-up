@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accounting Journal Entry Tilt</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            text-align: center;
+            background-color: #f0f4f8;
+            margin: 0;
+            color: #2d3748;
+        }
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 15px;
+        }
+        #camera-wrapper {
+            position: relative;
+            width: 300px;
+            height: 200px;
+            border: 4px solid #4a5568;
+            border-radius: 12px;
+            background: #000;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        video {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+        }
+        .ui-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 700px;
+        }
+        .choices-container {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+            gap: 10px;
+        }
+        .choice-box {
+            flex: 1;
+            padding: 15px;
+            border: 3px dashed #cbd5e0;
+            border-radius: 10px;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        #choice-a { border-color: #4299e1; color: #2b6cb0; }
+        #choice-b { border-color: #ed8936; color: #c05621; }
+        
+        #question-text { font-size: 22px; font-weight: bold; min-height: 60px; }
+        #feedback { font-size: 28px; font-weight: bold; margin: 10px; height: 35px; }
+        #explanation { font-size: 18px; color: #4a5568; min-height: 50px; background: #edf2f7; padding: 10px; border-radius: 8px; }
+        
+        .active-tilt { background-color: #ebf8ff; border-style: solid; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <h2>📊 Journal Entry Warm-up</h2>
+    
+    <div id="camera-wrapper">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <div class="ui-panel">
+        <div id="question-text">Loading Accounting Challenge...</div>
+        
+        <div id="feedback"></div>
+        
+        <div class="choices-container" id="choices-ui">
+            <div id="choice-a" class="choice-box">A: --</div>
+            <div id="choice-b" class="choice-box">B: --</div>
+        </div>
+
+        <p id="explanation">Please allow camera access to start.</p>
+    </div>
+</div>
+
+<script>
+    const videoElement = document.getElementById('webcam');
+    const questionEl = document.getElementById('question-text');
+    const choiceAEl = document.getElementById('choice-a');
+    const choiceBEl = document.getElementById('choice-b');
+    const feedbackEl = document.getElementById('feedback');
+    const explanationEl = document.getElementById('explanation');
+
+    let currentQ = 0;
+    let canInput = false;
+
+    const quizData = [
+        { q: "Q1: Purchase of goods on credit.", a: "Dr Purchases, Cr Trade Payables", b: "Dr Trade Payables, Cr Purchases", correct: "A", exp: "Record purchases on debit, credit the supplier (trade payables)." },
+        { q: "Q2: Return goods to trade payable.", a: "Dr Returns Outwards, Cr Trade Payables", b: "Dr Trade Payables, Cr Returns Outwards", correct: "B", exp: "Returns outwards reduces payables (Debit Payables)." },
+        { q: "Q3: Payment to trade payable by cash.", a: "Dr Cash, Cr Trade Payables", b: "Dr Trade Payables, Cr Cash", correct: "B", exp: "Paying supplier reduces payables (debit) and reduces cash (credit)." },
+        { q: "Q4: Cash received from customer.", a: "Dr Cash, Cr Trade Receivables", b: "Dr Trade Receivables, Cr Cash", correct: "A", exp: "Receiving cash increases cash (debit) and reduces receivables (credit)." },
+        { q: "Q5: Purchase of van by cheque.", a: "Dr Motor Vehicle, Cr Bank", b: "Dr Van, Cr Cheque", correct: "A", exp: "Record asset (motor vehicle) and reduce bank." },
+        { q: "Q6: Sale of goods on credit.", a: "Dr Trade Receivable, Cr Sales", b: "Dr Sales, Cr Customer", correct: "A", exp: "Record receivable (asset) and sales (revenue)." }
+    ];
+
+    function loadQuestion() {
+        if (currentQ >= quizData.length) {
+            showRecap();
+            return;
+        }
+        const data = quizData[currentQ];
+        questionEl.innerText = data.q;
+        choiceAEl.innerText = "TILT LEFT for A: " + data.a;
+        choiceBEl.innerText = "TILT RIGHT for B: " + data.b;
+        feedbackEl.innerText = "";
+        explanationEl.innerText = "Tilt your head now!";
+        canInput = true;
+    }
+
+    function showRecap() {
+        questionEl.innerText = "🎉 All Done! Quick Recap:";
+        choiceAEl.style.display = "none";
+        choiceBEl.style.display = "none";
+        explanationEl.innerHTML = quizData.map((d, i) => `<b>Q${i+1}:</b> ${d.correct} - ${d.exp}`).join("<br><br>");
+        canInput = false;
+    }
+
+    // Initialize FaceMesh
+    const faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
+    faceMesh.onResults(onResults);
+
+    async function setupCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        videoElement.srcObject = stream;
+        loadQuestion();
+        setInterval(async () => { await faceMesh.send({image: videoElement}); }, 100);
+    }
+
+    function onResults(results) {
+        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0 || !canInput) return;
+
+        const landmarks = results.multiFaceLandmarks[0];
+        const tilt = landmarks[33].y - landmarks[263].y; // Left Eye vs Right Eye
+
+        if (tilt > 0.07) handleAnswer("A");
+        else if (tilt < -0.07) handleAnswer("B");
+    }
+
+    function handleAnswer(choice) {
+        canInput = false;
+        const correct = quizData[currentQ].correct;
+        
+        if (choice === "A") choiceAEl.classList.add("active-tilt");
+        else choiceBEl.classList.add("active-tilt");
+
+        if (choice === correct) {
+            feedbackEl.innerText = "CORRECT! ✅";
+            feedbackEl.style.color = "#38a169";
+        } else {
+            feedbackEl.innerText = "INCORRECT ❌";
+            feedbackEl.style.color = "#e53e3e";
+        }
+
+        explanationEl.innerText = quizData[currentQ].exp;
+
+        setTimeout(() => {
+            choiceAEl.classList.remove("active-tilt");
+            choiceBEl.classList.remove("active-tilt");
+            currentQ++;
+            loadQuestion();
+        }, 4000); // 4 second pause for feedback
+    }
+
+    setupCamera();
+</script>
+
+</body>
+</html>
